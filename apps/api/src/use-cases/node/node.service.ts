@@ -36,23 +36,25 @@ export class NodeService {
     const content = JSON.stringify(_node.content);
     const embeddings = await this.openaiService.createEmbeddings(content);
     const completions = await this.openaiService.createCompletion(content);
-
+    const metadataTags = await this.openaiService.createMetadataTags(content);
     const node: Partial<Node> = {
       id: nodeId,
       ...completions,
       embeddings,
       // ToDo Get user id from auth context
-      user: { id: '0aec463b-f774-4bb0-b2ed-dc11d1dc233b' },
+      user: { id: '087f9893-eebe-42e4-8e7a-7639ba6ca943' },
       content: _node.content,
       metadata: {
         id: randomUUID(),
+        tags: metadataTags.metadataTags,
+        tagsEmbedding: metadataTags.metadataTagEmbedding,
         ..._node.metadata,
       },
     };
     const savedNode = await this.nodeRepository.save(node);
     const connectedNodes =
       await this.nodeConnectionService.getConnectedNodesByNodeId(savedNode);
-    // Not awaited on purpose
+
     await this.connectionEngineService.processNode(savedNode, connectedNodes);
 
     return savedNode;

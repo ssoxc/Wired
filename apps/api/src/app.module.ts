@@ -15,7 +15,6 @@ import { NodeConnectionModule } from './use-cases/node-connection/node-connectio
       url: process.env.DATABASE_URL,
       autoLoadEntities: true,
       synchronize: true, // keep false in production
-      ssl: { rejectUnauthorized: false },
     }),
     NodeModule,
     UserModule,

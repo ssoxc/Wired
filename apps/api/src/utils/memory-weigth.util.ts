@@ -29,6 +29,35 @@ export function getRecentCutoff(node: Node): {
   return { recentCutoff, temperature };
 }
 
+export const calculateTagBoost = (
+  targetNode: Node,
+  sourceNode: Node,
+): number => {
+  const sourceMetadataTagsEmbedding = sourceNode.metadata.tagsEmbedding;
+  const targetMetadataTagsEmbedding = targetNode.metadata.tagsEmbedding;
+
+  if (
+    !sourceMetadataTagsEmbedding?.length ||
+    !targetMetadataTagsEmbedding?.length
+  )
+    return 0;
+
+  let totalScore = 0;
+  let comparisons = 0;
+
+  const score = cosineSimilarity(
+    sourceMetadataTagsEmbedding,
+    targetMetadataTagsEmbedding,
+  );
+  if (score > 0.7) {
+    totalScore += score;
+    comparisons++;
+  }
+
+  if (comparisons === 0) return 0;
+  return totalScore / comparisons;
+};
+
 export const calculateSimilarityScore = (
   node: Node,
   connectedNodes: Node[],
@@ -37,7 +66,7 @@ export const calculateSimilarityScore = (
 ): Array<{ node: Node; adjustedScore: number }> => {
   return recentNodes.map((candidate) => {
     let similarity = cosineSimilarity(contextEmbedding, candidate.embeddings);
-
+    const tagBoostScore = calculateTagBoost(candidate, node);
     if (candidate.type === node.type) similarity += 0.05;
 
     const hasMutual = connectedNodes.some((cn) => candidate.id === cn.id);
@@ -49,7 +78,7 @@ export const calculateSimilarityScore = (
 
     return {
       node: candidate,
-      adjustedScore: clamp(similarity, 0, 1),
+      adjustedScore: clamp(similarity + tagBoostScore, 0, 1),
     };
   });
 };

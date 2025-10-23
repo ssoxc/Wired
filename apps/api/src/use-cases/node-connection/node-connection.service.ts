@@ -23,7 +23,7 @@ export class NodeConnectionService {
   public async getConnectedNodesByNodeId(node: Node): Promise<Node[]> {
     const connected = await this.nodeConnectionRepository.find({
       where: [{ sourceNodeId: node.id }, { targetNodeId: node.id }],
-      relations: ['source', 'target'],
+      relations: ['source', 'target', 'source.metadata', 'target.metadata'],
       order: { createdAt: 'DESC' },
       take: 10,
     });

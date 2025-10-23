@@ -23,6 +23,9 @@ export class NodeMetadata {
   @Column('text', { array: true, nullable: true })
   tags?: string[];
 
+  @Column('vector', { nullable: true })
+  tagsEmbedding?: number[];
+
   @Column({
     type: 'enum',
     enum: NodeSources,

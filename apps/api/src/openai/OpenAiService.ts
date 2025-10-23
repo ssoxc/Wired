@@ -9,9 +9,12 @@ import { Node } from '../entities/Node';
 import { NodeRelationType } from '../enums/NodeRelationType';
 import { RelationTypeClassification } from './prompts/RelationTypeClassification';
 import { isNodeRelationType } from './guards/isNodeRelationType';
+import { MetadataTagsTemplate } from './prompts/MetadataTagsTemplate';
+import { IGeneratedMetadataTags } from '../types/IGeneratedMetadataTags';
 
 export class OpenAiService {
   private openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
+
   public async createRelationSummary(
     sourceNode: Node,
     targetNode: Node,
@@ -76,6 +79,37 @@ export class OpenAiService {
       throw new BadRequestException('Could not create embeddings');
     }
     return embeddingRes.data[0].embedding;
+  }
+
+  public async createMetadataTags(
+    content: string,
+  ): Promise<IGeneratedMetadataTags> {
+    const generatedMetadataTags = await this.openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: MetadataTagsTemplate.system },
+        {
+          role: 'user',
+          content: MetadataTagsTemplate.base(content),
+        },
+      ],
+    });
+
+    if (
+      generatedMetadataTags.choices.length == 0 ||
+      !generatedMetadataTags.choices[0].message.content
+    ) {
+      throw new BadRequestException('Could not create metadata');
+    }
+
+    const metadataTags = generatedMetadataTags.choices[0].message.content;
+
+    const metadataTagEmbeddings = await this.createEmbeddings(metadataTags);
+
+    return {
+      metadataTags: metadataTags?.split(','),
+      metadataTagEmbedding: metadataTagEmbeddings,
+    };
   }
 
   public async createCompletion(

@@ -131,6 +131,7 @@ export class ConnectionEngineService {
         createdAt: MoreThan(recentCutoff),
         id: Not(node.id),
       },
+      relations: ['metadata'],
       take: 100,
     });
 

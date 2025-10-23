@@ -103,7 +103,7 @@ apps/api/src/
 │   ├── Node.ts           # Core thought/memory entity
 │   ├── NodeConnection.ts # Semantic relationships (edges)
 │   ├── NodeContent.ts    # Actual content + media
-│   ├── NodeMetadata.ts   # UI/visualization metadata
+│   ├── NodeMetadata.ts   # UI/visualization metadata + tags
 │   ├── NodeInteraction.ts# User engagement tracking
 │   └── User.ts           # User entity
 │
@@ -115,7 +115,6 @@ apps/api/src/
 │
 ├── connection-system/    # AI Connection Engine
 │   ├── ConnectionEngineService.ts    # Core matching logic
-│   ├── memory-weight.util.ts         # Temperature & decay
 │   └── BASE_NODE_TYPE_LIFETIME.ts    # Type-based lifetimes
 │
 ├── openai/               # AI Integration Layer
@@ -124,7 +123,8 @@ apps/api/src/
 │   ├── prompts/                      # Prompt templates
 │   │   ├── CompletionPromptTemplates.ts
 │   │   ├── RelationSummaryTemplate.ts
-│   │   └── RelationTypeClassification.ts
+│   │   ├── RelationTypeClassification.ts
+│   │   └── MetadataTagsTemplate.ts
 │   └── schema/                       # JSON schemas
 │
 ├── use-cases/            # Business Logic Layer
@@ -132,11 +132,20 @@ apps/api/src/
 │   │   ├── node.controller.ts
 │   │   ├── node.service.ts
 │   │   └── node.module.ts
+│   ├── node-connection/  # Connection queries
+│   │   ├── node-connection.service.ts
+│   │   └── node-connection.module.ts
 │   └── user/             # User management
+│
+├── utils/                # Utility Functions
+│   ├── memory-weigth.util.ts  # Temperature & similarity scoring
+│   ├── vector.utils.ts        # Vector operations
+│   └── math.util.ts           # Math helpers
 │
 ├── types/                # TypeScript Interfaces
 │   ├── dto/CreateNode.ts
 │   ├── IOpenAiCompletion.ts
+│   ├── IGeneratedMetadataTags.ts
 │   └── IPosition.ts
 │
 ├── app.module.ts         # Root application module
@@ -179,9 +188,10 @@ apps/api/src/
 │  NodeContent     │          │   NodeMetadata     │
 ├──────────────────┤          ├────────────────────┤
 │ text: string     │          │ tags: string[]     │
-│ data: json       │          │ source: enum       │
-│ media: NodeMedia │          │ color: string      │
-└──────────────────┘          │ position: Vec3     │
+│ data: json       │          │ tagsEmbedding: vec │
+│ media: NodeMedia │          │ source: enum       │
+└──────────────────┘          │ color: string      │
+                              │ position: Vec3     │
                               │ lastSyncedAt: date │
                               └────────────────────┘
 ┌───────────────────────────────────────────────────┐
@@ -261,35 +271,55 @@ The **ConnectionEngineService** automatically discovers and creates semantic con
         └──────────────┬──────────────┘
                        │
         ┌──────────────▼──────────────┐
-        │  3. Save Node to DB         │
+        │  3. Generate Metadata Tags  │
+        │     (GPT-4o-mini)           │
+        │  • Extract key tags         │
+        │  • Create tag embeddings    │
         └──────────────┬──────────────┘
                        │
         ┌──────────────▼──────────────┐
-        │  4. Connection Engine       │
+        │  4. Save Node to DB         │
+        └──────────────┬──────────────┘
+                       │
+        ┌──────────────▼──────────────┐
+        │  5. Fetch Connected Nodes   │
+        │     (Last 10 connections)   │
+        └──────────────┬──────────────┘
+                       │
+        ┌──────────────▼──────────────┐
+        │  6. Connection Engine       │
         │     Processing              │
         └──────────────┬──────────────┘
                        │
         ┌──────────────▼──────────────────────┐
-        │  4a. Get Candidates                 │
+        │  6a. Get Candidates                 │
         │  • Calculate recency cutoff         │
-        │  • Query by vector similarity       │
-        │  • Filter by graph temperature      │
-        │  • Return top 20 matches            │
+        │  • Fetch recent nodes from DB       │
+        │  • Create context embedding         │
+        │    (average of node + connected)    │
+        │  • Calculate similarity scores      │
+        │  • Apply tag boost                  │
+        │  • Apply type matching bonus        │
+        │  • Apply mutual connection bonus    │
+        │  • Filter & return top 20           │
         └──────────────┬──────────────────────┘
                        │
         ┌──────────────▼──────────────────────┐
-        │  4b. Evaluate Connections           │
-        │  For each candidate:                │
-        │  • Compute cosine similarity        │
-        │  • Calculate confidence score       │
+        │  6b. Evaluate Connections           │
+        │  For each candidate (≥0.55 score):  │
+        │  • Calculate confidence:            │
+        │    - Similarity * 0.7               │
+        │    - Recency boost * 0.15           │
+        │    - Type match * 0.15              │
         │  • Generate relation summary (AI)   │
         │  • Classify relation type (AI)      │
         │  • Create NodeConnection entity     │
+        │  • Create reverse connection        │
         └──────────────┬──────────────────────┘
                        │
         ┌──────────────▼──────────────────────┐
-        │  4c. Reinforcement                  │
-        │  If similarity ≥ 0.65 & same type:  │
+        │  6c. Reinforcement                  │
+        │  If confidence ≥ 0.8:               │
         │  • Boost memoryWeight               │
         │  • Increase importance              │
         │  • Save updated nodes               │
@@ -329,34 +359,88 @@ function getRecentCutoff(node: Node) {
 
 Active nodes with high importance and recent connections maintain extended temporal search windows, allowing them to connect with older content. Inactive nodes have shorter windows and only connect with recent matches.
 
-### Connection Confidence Scoring
+### Context-Aware Similarity Scoring
+
+The system uses a sophisticated multi-factor scoring approach:
 
 ```typescript
-// Cosine similarity between embedding vectors
-const similarity = cosineSimilarity(
-  newNode.embeddings, 
-  candidate.embeddings
+// 1. Create context embedding (average of node + its connections)
+const contextEmbedding = averageVectors([
+  node.embeddings,
+  ...connectedNodes.map(cn => cn.embeddings)
+]);
+
+// 2. Calculate base similarity
+let similarity = cosineSimilarity(contextEmbedding, candidate.embeddings);
+
+// 3. Apply tag boost (if tags are similar)
+const tagBoost = cosineSimilarity(
+  node.metadata.tagsEmbedding,
+  candidate.metadata.tagsEmbedding
 );
+if (tagBoost > 0.7) similarity += tagBoost;
 
-// Only create connections above threshold
-if (similarity < 0.65) continue;
+// 4. Type matching bonus
+if (candidate.type === node.type) similarity += 0.05;
 
-// Confidence = similarity score
-const confidence = similarity;
+// 5. Mutual connection bonus
+if (hasSharedConnections) similarity += 0.1;
+
+// 6. Importance overlap
+const importanceOverlap = 1 - Math.abs(node.importance - candidate.importance);
+similarity += importanceOverlap * 0.05;
+
+// Only process candidates with score ≥ 0.55
+if (adjustedScore < 0.55) continue;
+```
+
+### Confidence Calculation
+
+Connection confidence combines multiple signals:
+
+```typescript
+const confidence = 
+  similarity * 0.7 +                    // Semantic similarity (70%)
+  getRecencyBoost(candidate) * 0.15 +   // Recency factor (15%)
+  (sameType ? 0.15 : 0);                // Type match bonus (15%)
+
+// Recency boost: full boost if <1 day old, fades over a week
+function getRecencyBoost(node: Node): number {
+  const daysAgo = (now - node.createdAt) / MS_PER_DAY;
+  return Math.max(0, 1 - daysAgo / 7);
+}
+```
+
+### Bidirectional Connections
+
+The system creates connections in both directions:
+
+```typescript
+// Forward connection (source → target)
+await save(connection);
+
+// Reverse connection (target → source) with slightly lower confidence
+const reverseConnection = {
+  ...connection,
+  source: connection.target,
+  target: connection.source,
+  confidence: connection.confidence * 0.95
+};
+await save(reverseConnection);
 ```
 
 ### Reinforcement Learning
 
-When two nodes of the same type are highly similar (≥0.65), they reinforce each other:
+High-confidence connections (≥0.8) trigger reinforcement:
 
 ```typescript
-const reinforcement = min(1, similarity * 0.1);
+const reinforcement = min(1, confidence * 0.1);
 
 node.memoryWeight = min(1, node.memoryWeight + reinforcement);
-node.importance = min(1, node.importance + reinforcement * 0.5);
+node.importance = min(1, node.importance + reinforcement * 0.65);
 ```
 
-This implements a Hebbian-like learning pattern where frequently connected nodes strengthen each other's relevance.
+This implements a Hebbian-like learning pattern where strongly connected nodes strengthen each other's relevance.
 
 ---
 
@@ -481,11 +565,13 @@ Content-Type: application/json
 **Response**: Full `Node` object with AI-generated fields
 
 **Process**:
-1. Generates 1536D embedding vector
-2. Creates title, summary, sentiment, importance via GPT-4o-mini
-3. Saves to database
-4. Asynchronously runs Connection Engine
-5. Returns node immediately (connections processed in background)
+1. Generates 1536D embedding vector from content
+2. Creates title, summary, sentiment, importance, type via GPT-4o-mini
+3. Generates metadata tags and tag embeddings
+4. Saves node to database
+5. Fetches last 10 connected nodes
+6. Runs Connection Engine to find and create semantic links
+7. Returns saved node
 
 ---
 
@@ -603,6 +689,7 @@ TypeOrmModule.forRoot({
 - **Sentiment Analysis**: Emotional tone detection (-1 to +1)
 - **Importance Scoring**: AI evaluates significance (0 to 1)
 - **Type Classification**: Automatic categorization into 11 types
+- **Metadata Tag Generation**: AI extracts key tags with separate embeddings
 - **Relation Classification**: 8 semantic relationship types
 
 ### 7. **Multi-Modal Content Support** (Planned)
@@ -622,6 +709,51 @@ TypeOrmModule.forRoot({
 ---
 
 ## 🧮 Algorithm Deep Dive
+
+### Context-Aware Matching
+
+The system implements **context-aware similarity** by considering not just the new node in isolation, but its relationship to already-connected nodes:
+
+```typescript
+// Instead of comparing node embeddings directly:
+similarity = cosineSimilarity(nodeA.embeddings, nodeB.embeddings)
+
+// The system creates a context embedding:
+contextEmbedding = average([
+  newNode.embeddings,
+  connectedNode1.embeddings,
+  connectedNode2.embeddings,
+  // ... up to 10 most recent connections
+])
+
+// Then compares against this enriched context:
+similarity = cosineSimilarity(contextEmbedding, candidate.embeddings)
+```
+
+**Benefits**:
+- Nodes connect based on their **semantic neighborhood**, not just individual content
+- Creates more coherent clusters of related ideas
+- Naturally groups concepts that share common connections
+- Reduces false positives from superficial keyword matches
+
+### Tag-Based Semantic Boost
+
+Metadata tags provide an additional similarity signal:
+
+```typescript
+// AI generates tags for each node
+tags = ["machine-learning", "neural-networks", "embeddings"]
+tagsEmbedding = embed(tags.join(", "))
+
+// During matching, if tags are highly similar (>0.7):
+if (cosineSimilarity(nodeA.tagsEmbedding, nodeB.tagsEmbedding) > 0.7) {
+  similarity += tagBoost  // Significant boost to connection score
+}
+```
+
+This creates a **dual-layer semantic matching system**:
+1. **Content embeddings**: What the node is about
+2. **Tag embeddings**: High-level categorical similarity
 
 ### Memory Weight Formula
 
@@ -662,25 +794,37 @@ adjustedWindow = 7 * (1 + 0.36 * 1.5) = 10.78 days
 
 ---
 
-### Cosine Similarity Implementation
+### Vector Utility Functions
 
 ```typescript
+// Cosine similarity between two vectors
 function cosineSimilarity(a: number[], b: number[]): number {
+  if (!a?.length || !b?.length) return 0;
   const dot = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
   const normA = Math.sqrt(a.reduce((sum, ai) => sum + ai * ai, 0));
   const normB = Math.sqrt(b.reduce((sum, bi) => sum + bi * bi, 0));
   return dot / (normA * normB);
 }
+
+// Average multiple vectors into a single context embedding
+function averageVectors(vectors: number[][]): number[] {
+  const validVectors = vectors.filter(v => v?.length > 0);
+  if (validVectors.length === 0) return [];
+  
+  const length = validVectors[0].length;
+  const sum = new Array(length).fill(0);
+  
+  for (const vec of validVectors) {
+    for (let i = 0; i < length; i++) {
+      sum[i] += vec[i];
+    }
+  }
+  
+  return sum.map(value => value / validVectors.length);
+}
 ```
 
-**Performance Note**: In production, this is offloaded to PostgreSQL's pgvector extension:
-
-```sql
-SELECT *, 1 - (embeddings <=> '[0.1, 0.2, ...]') AS similarity
-FROM node
-ORDER BY similarity DESC
-LIMIT 20;
-```
+**Performance Note**: For initial candidate filtering, vector operations are offloaded to PostgreSQL's pgvector extension for efficiency.
 
 ---
 
@@ -826,17 +970,22 @@ CREATE INDEX idx_connection_confidence ON node_connections(confidence);
 
 ### AI Cost Optimization
 
-**Current Usage per Node**:
-- 1x embedding call (~$0.00002)
-- 1x completion call (~$0.0001)
-- Nx relation summaries (N = number of connections)
+**Current Usage per Node Creation**:
+- 1x content embedding call (~$0.00002)
+- 1x completion call for metadata (~$0.0001)
+- 1x tag generation call (~$0.00005)
+- 1x tag embedding call (~$0.00001)
+- Nx relation summaries (N = number of connections created)
 - Nx relation classifications
+
+**Total per node**: ~$0.00018 + (N × $0.0002) where N is typically 1-5 connections
 
 **Optimization Strategies**:
 - Batch embed multiple nodes in single API call
 - Cache embeddings for unchanged content
-- Use GPT-3.5-turbo for relation summaries (cheaper)
-- Implement similarity threshold to limit connection attempts
+- Reuse tag embeddings when tags don't change
+- Similarity threshold (0.55) limits connection attempts
+- Context embedding reduces redundant similarity checks
 
 ---
 
