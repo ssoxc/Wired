@@ -23,36 +23,46 @@
 
 ## 🎯 Overview
 
-**Wired API** is a NestJS-based backend for a 3D knowledge graph system that models semantic connections between thoughts, ideas, and memories.
+This is the **backend API** for the Wired knowledge graph system. Built with NestJS and TypeScript, it provides the core intelligence layer that powers automatic semantic connection discovery.
 
-The system implements:
-- **Semantic Node Creation**: Transforms raw content into enriched graph nodes using OpenAI embeddings
-- **Automatic Connection Discovery**: Uses vector similarity to find and classify relationships between nodes
-- **Dynamic Relevance Scoring**: Implements a memory weight algorithm that adjusts node importance based on activity and recency
-- **Temperature-Based Graph Management**: Simulates memory decay and reinforcement through type-specific lifetime windows
-- **AI-Powered Classification**: Leverages GPT-4o-mini for content analysis, summarization, and relation typing
+**Core Responsibilities**:
+- Process and enrich user-generated content with AI metadata
+- Generate and store vector embeddings for semantic search
+- Discover and create connections between related nodes
+- Manage graph dynamics through memory weight and temperature algorithms
+- Provide REST API endpoints for frontend consumption
+
+For project overview and setup instructions, see the [main README](../../README.md).
 
 ---
 
-## 💡 Core Concept
+## 💡 Technical Approach
 
-**Wired** implements a dynamic knowledge graph where content items (nodes) autonomously form semantic connections based on meaning rather than explicit user-defined links.
+This API implements a **multi-layered semantic matching system** that goes beyond simple keyword or vector similarity.
 
-### Key Mechanisms
+### Implementation Strategy
 
-- **Node System**: Content is stored as typed entities (thoughts, ideas, tasks, memories, etc.) with AI-generated metadata
-- **Semantic Connections**: Embeddings-based similarity detection automatically creates directed edges between related nodes
-- **Memory Weight Algorithm**: Dynamic relevance scoring adjusts based on connection activity, recency, and importance
-- **Graph Temperature**: Type-specific temporal windows determine how far back the system searches for connections
-- **Reinforcement Learning**: Highly similar nodes strengthen each other's memory weight and importance scores
+**1. Content Processing Pipeline**
+- Raw text → OpenAI embeddings (1536D vectors)
+- GPT-4o-mini extracts structured metadata (title, summary, sentiment, importance, type)
+- Separate tag generation with dedicated embeddings for categorical matching
 
-### Design Inspiration
+**2. Context-Aware Connection Discovery**
+- Creates composite embeddings from node + its existing connections
+- Compares against candidates using multi-factor scoring
+- Applies type bonuses, tag boosts, and recency weights
+- Filters by configurable similarity thresholds (0.55+)
 
-The system draws from several domains:
-- **Neural Networks**: Connection reinforcement through repeated activation
-- **Cognitive Science**: Memory decay curves and recency-based relevance
-- **Graph Theory**: Directed edges with typed semantic relationships
-- **Information Retrieval**: Vector embeddings for semantic similarity search
+**3. Graph Dynamics Management**
+- Type-specific temporal windows (emotions: 3 days, goals: 90 days)
+- Activity-based window extensions for "hot" nodes
+- Confidence-based reinforcement (≥0.8 triggers memory weight boost)
+- Bidirectional relationship creation with asymmetric confidence
+
+**4. Database Optimization**
+- PostgreSQL with pgvector for efficient similarity queries
+- Computed properties for connection metrics
+- Strategic indexing for common query patterns
 
 ---
 
@@ -470,70 +480,43 @@ This implements a Hebbian-like learning pattern where strongly connected nodes s
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Quick Start
 
-### Prerequisites
+**Note**: For full installation instructions, see the [main README](../../README.md#-getting-started).
 
-- Node.js 18+ or Bun
-- PostgreSQL 14+ with **pgvector extension**
-- OpenAI API Key
-
-### Installation
+### Running the API
 
 ```bash
-# Clone repository
-git clone <repository-url>
-cd wired/apps/api
+# From project root
+yarn dev --filter=api
 
-# Install dependencies
-yarn install
-# or
-npm install
-```
-
-### Database Setup
-
-```sql
--- Connect to your PostgreSQL instance
-psql -U postgres
-
--- Enable vector extension
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- TypeORM will auto-create tables (synchronize: true in dev)
-```
-
-### Environment Configuration
-
-Create a `.env` file in `apps/api/`:
-
-```env
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/wired
-
-# OpenAI
-OPENAI_KEY=sk-proj-...
-
-# Application
-PORT=3000
-NODE_ENV=development
-```
-
-### Running the Application
-
-```bash
-# Development mode (watch mode)
+# Or from apps/api directory
+cd apps/api
 yarn dev
-
-# Production build
-yarn build
-yarn start:prod
-
-# Debug mode
-yarn start:debug
 ```
 
-The API will be available at `http://localhost:3000`
+### Environment Variables
+
+Required in `apps/api/.env`:
+
+| Variable       | Description                    | Example                          |
+|----------------|--------------------------------|----------------------------------|
+| `DATABASE_URL` | PostgreSQL connection string   | `postgresql://user:pass@localhost:5432/wired` |
+| `OPENAI_KEY`   | OpenAI API key                 | `sk-proj-...`                    |
+| `PORT`         | Server port (optional)         | `3000`                           |
+| `NODE_ENV`     | Environment                    | `development` or `production`    |
+
+### Development Commands
+
+```bash
+yarn dev          # Start with hot reload
+yarn build        # Compile TypeScript
+yarn start:prod   # Run production build
+yarn test         # Run unit tests
+yarn test:e2e     # Run E2E tests
+yarn lint         # Run ESLint
+yarn format       # Format with Prettier
+```
 
 ---
 
@@ -628,83 +611,78 @@ Content-Type: application/json
 
 ---
 
-## ⚙️ Environment Configuration
+## ⚙️ Configuration Details
 
-### Required Variables
+### TypeORM Configuration
 
-| Variable       | Description                              | Example                          |
-|----------------|------------------------------------------|----------------------------------|
-| `DATABASE_URL` | PostgreSQL connection string             | `postgresql://...`               |
-| `OPENAI_KEY`   | OpenAI API key                           | `sk-proj-...`                    |
-| `PORT`         | Application port (optional, default 3000)| `3000`                           |
-
-### Database Configuration
-
-The app uses TypeORM with these settings (see `app.module.ts`):
+Located in `app.module.ts`:
 
 ```typescript
 TypeOrmModule.forRoot({
   type: 'postgres',
   url: process.env.DATABASE_URL,
   autoLoadEntities: true,
-  synchronize: true, // ⚠️ Disable in production!
-  ssl: { rejectUnauthorized: false }, // For cloud databases
+  synchronize: true, // ⚠️ Auto-creates tables in dev only
+  ssl: { rejectUnauthorized: false },
 })
 ```
 
-**Production Recommendation**: Set `synchronize: false` and use migrations.
+**Production Setup**:
+- Set `synchronize: false`
+- Use TypeORM migrations for schema changes
+- Enable SSL certificate validation
 
 ---
 
-## ✨ Key Features
+## ✨ Implementation Highlights
 
-### 1. **Automatic Semantic Linking**
-- Nodes connect themselves based on meaning, not keywords
-- AI analyzes context and generates human-readable relationship summaries
+### 1. **Multi-Factor Similarity Scoring**
+Combines 6 different signals for connection confidence:
+- Base cosine similarity between context embeddings
+- Tag embedding similarity (>0.7 threshold)
+- Type matching bonus (+0.05)
+- Mutual connection bonus (+0.1)
+- Importance overlap factor (+0.05)
+- Recency boost (decays over 7 days)
 
-### 2. **Vector-Based Similarity**
-- 1536-dimensional embeddings capture semantic content
-- pgvector extension provides efficient similarity queries
-- Cosine distance operator (`<=>`) for nearest-neighbor search
+### 2. **Context-Aware Embeddings**
+Creates composite vectors by averaging:
+```typescript
+contextEmbedding = average([
+  node.embeddings,
+  ...last10Connections.map(c => c.embeddings)
+])
+```
+This produces more coherent clusters than isolated node comparison.
 
-### 3. **Dynamic Memory Weight**
-- Nodes have a "relevance score" that changes over time
-- Factors: recency, connection activity, user interactions, importance
-- Simulates human memory: active ideas stay warm, inactive ones fade
+### 3. **Bidirectional Relationships**
+Every connection creates two edges:
+- Forward: source → target (confidence: C)
+- Reverse: target → source (confidence: C × 0.95)
 
-### 4. **Graph Temperature System**
-- Type-based base lifetimes (emotions: 3 days, goals: 90 days)
-- Activity boosts extend search windows based on connection count and confidence
-- Decay factors reduce relevance over time since last connection
-- Active nodes maintain longer temporal search ranges
-- Inactive nodes have shorter connection windows
+Enables graph traversal in both directions while maintaining asymmetric confidence.
 
-### 5. **Reinforcement Learning**
-- Similar nodes of the same type strengthen each other
-- Memory weight and importance increase proportionally
-- Creates emergent "concept clusters" over time
+### 4. **Adaptive Temporal Windows**
+```typescript
+adjustedWindow = baseWindow × (1 + temperature × 1.5)
+```
+Where temperature combines:
+- Activity boost (connection count × avg confidence)
+- Decay factor (time since last connection)
+- Importance score
 
-### 6. **AI-Powered Content Analysis**
-- **Structured Summarization**: Every node gets a concise title and summary
-- **Sentiment Analysis**: Emotional tone detection (-1 to +1)
-- **Importance Scoring**: AI evaluates significance (0 to 1)
-- **Type Classification**: Automatic categorization into 11 types
-- **Metadata Tag Generation**: AI extracts key tags with separate embeddings
-- **Relation Classification**: 8 semantic relationship types
+### 5. **Threshold-Based Processing**
+- Initial filtering: 0.55 similarity
+- Connection creation: 0.55+ confidence
+- Reinforcement trigger: 0.8+ confidence
 
-### 7. **Multi-Modal Content Support** (Planned)
-- Text, images, audio, video
-- Media stored as `NodeMedia` entities
-- Extensible `NodeContent.data` field for rich metadata
+Prevents low-quality connections while allowing meaningful links.
 
-### 8. **Source Tracking**
-- Nodes can originate from multiple sources:
-  - Manual entry
-  - Spotify listening history
-  - Notion pages
-  - Calendar events
-  - GitHub activity
-  - AI-generated content
+### 6. **Dual-Embedding System**
+- **Content embeddings**: Semantic meaning of the node
+- **Tag embeddings**: Categorical/topical classification
+
+Provides both fine-grained and high-level similarity matching.
 
 ---
 
@@ -877,43 +855,9 @@ yarn test:watch
 
 ---
 
-## 📝 Contributing
-
-### Development Workflow
-
-1. **Clone and install**
-   ```bash
-   git clone <repo>
-   cd wired/apps/api
-   yarn install
-   ```
-
-2. **Create feature branch**
-   ```bash
-   git checkout -b feature/your-feature
-   ```
-
-3. **Make changes** following TypeScript/NestJS best practices
-
-4. **Run linter and formatter**
-   ```bash
-   yarn lint
-   yarn format
-   ```
-
-5. **Test thoroughly**
-   ```bash
-   yarn test
-   yarn test:e2e
-   ```
-
-6. **Submit PR** with detailed description
-
----
-
 ## 📄 License
 
-[Insert License Here]
+MIT License - see [LICENSE](../../LICENSE) file for details
 
 ---
 
@@ -923,16 +867,6 @@ yarn test:watch
 - **pgvector** for making vector search in Postgres possible
 - **NestJS** team for the excellent framework
 - Inspired by research in cognitive science, neural networks, and knowledge graphs
-
----
-
-## 📞 Contact
-
-For questions or collaboration opportunities:
-- **GitHub Issues**: [Link to issues]
-- **Email**: [Your email]
-
----
 
 ## 🔬 Technical Notes
 
